@@ -2,9 +2,9 @@
 # segment to line but only in postgis skipping geopandas entirely.
 # right now this operates in NAD83 BC Albers (CRS 3005). Probably best practice for this local area, however if we want to scale this up we'll need to revisit this.
 
-# currently using a temp database-- this is important because data is coming from lat/long so we need to create the temp as crs 4326, create the geometry then convert back to 3005 and insert into the main databse
+# currently using a temp database-- this is important because data is coming from lat/long so we need to create the temp as crs 4326, create the geometry then convert back to 3005 and insert into the main database
 
-# LAST UPDATED 2022-11-01 --> Moved to public repo thereafter
+# LAST UPDATED 2022-11-02 --> Removing logger method and instead including it in the main. This allows for a better log that can see the progress in the event the script shuts down prematurely
 
 import logging
 from datetime import datetime
@@ -13,10 +13,7 @@ import psycopg2 as pg
 # auth_class contains the database info so alter this depending on the target database
 import auth_class
 
-#starting time of script
-start_time = datetime.now()
-
-# database connection
+# establish database connection
 conn = pg.connect(host=auth_class.login.host,
                   port=auth_class.login.port,
                   dbname=auth_class.login.db,
@@ -27,10 +24,21 @@ conn = pg.connect(host=auth_class.login.host,
 def main():
     global conn
 
+    # starting time of script
+    start_time = datetime.now()
+
+    # initialize logger
+    logger = logging.getLogger('log')
+    logging.root.setLevel(logging.NOTSET)
+    logging.basicConfig(filename='seg_to_line_LOG.log', format="%(asctime)s;%(levelname)s;%(message)s",datefmt='%Y-%m-%d %H:%M:%S')
+
+    # first quick logger entry to determine start time of logger for records
+    logger.debug('Program Start..')
+
     # this is an assumption that all new or needing updating segments will not have any geom at this point --> must be careful here because this won't realize if segments need to be deleted
     cursor = conn.cursor()
-    query = "SELECT segmentid FROM " + auth_class.login.inputDb + " WHERE geom IS NULL"
-    cursor.execute(query)
+    sql = "SELECT segmentid FROM " + auth_class.login.inputDb + " WHERE geom IS NULL"
+    cursor.execute(sql)
     # Maybe alter the above query to also check for lenm and sogkt being 'null' as the assumption those would have to be updated as well?
 
     result = list(row[0] for row in cursor.fetchall())
@@ -42,13 +50,27 @@ def main():
 
     # if there's nothing to update the program shuts off here
     if not segList:
-        logger(False, 'empty')
+        # Just logging info to know when things were last run
+        now = datetime.now()
+        duration = (now - start_time)
+
+        logger.info(
+            "Nothing to update.. \nCompleted: " + now.strftime("%d/%m/%Y %H:%M:%S") + "\nRuntime = " + str(duration))
+
+        print('\n--------------------------------------------------------------------------------\n\nNothing to update..',
+            "\nCompleted: ", now.strftime("%d/%m/%Y %H:%M:%S"), "\nRuntime = ", duration,
+            "\n\n--------------------------------------------------------------------------------\n")
 
     else:
+        # start logging and console
+        now = datetime.now()
+        duration = (now - start_time)
+        print('\n--------------------------------------------------------------------------------\n')
+
         # select dates that occur within the segments being updated
         cursor = conn.cursor()
-        query = "SELECT starttime FROM " + auth_class.login.inputDb + " WHERE segmentid IN ({})".format(str(segList)[1:-1])
-        cursor.execute(query)
+        sql = "SELECT starttime FROM " + auth_class.login.inputDb + " WHERE segmentid IN ({})".format(str(segList)[1:-1])
+        cursor.execute(sql)
         result = cursor.fetchall()
 
         # loop to convert datetime to date in a list
@@ -61,10 +83,11 @@ def main():
         # only keeps unique dates to prevent unnecessary loops
         dateList = set(dateList)
 
-        # creates dictionary that stores pairings of dates and their associated segmentid's
-        resultsDict = {}
-
         for dates in dateList:
+            # creates dictionary that stores pairings of dates and their associated segmentid's
+            # -- note that this has been moved into this loop as the dictionary would be completely gone otherwise in the event of a premature program exit. This way we can see progress in the log.
+            resultsDict = {}
+
             # deletes previous temp database if exists and creates new one
             temper(conn)
 
@@ -79,8 +102,8 @@ def main():
 
             # adds the days that have been processed to a list to be logged
             cursor = conn.cursor()
-            query = 'SELECT segmentid FROM ' + auth_class.login.tempDb
-            cursor.execute(query)
+            sql = 'SELECT segmentid FROM ' + auth_class.login.tempDb
+            cursor.execute(sql)
             result = cursor.fetchall()
 
             theDate = datetime.strptime(dates, "'%Y-%m-%d'")
@@ -93,22 +116,29 @@ def main():
             # commits work to database between each day in case there is interruptions not all work is lost
             conn.commit()
 
-        # logs the line id's that were updated during this run of the program
-        logger(True, resultsDict)
+            print(theDate.date(), '  - - -  ', len(dailyList))
 
-    # close connection to database which also saves changes
+            # logs the line id's that were updated during this run of the program
+            logger.info(resultsDict)
+
+        # end print statement and end time + duration log
+        logger.info("   Completed: " + now.strftime("%d/%m/%Y %H:%M:%S") + "  Runtime = " + str(duration))
+
+        print("\n* listed dates and segment counts have been added or updated\nCompleted: ", now.strftime("%d/%m/%Y %H:%M:%S"),
+              "\nRuntime = ", duration,
+              "\n\n--------------------------------------------------------------------------------\n")
+
+    # closes connection to database which also saves changes
     conn.close()
 
 
 def temp_inserter(conn, date, segList):
     # moves the selected data from the main database into the temp database
     cursor = conn.cursor()
-
     sql = 'INSERT INTO ' + auth_class.login.tempDb + \
             ' SELECT * FROM ' + auth_class.login.inputDb + \
             ' WHERE CAST(starttime AS DATE)  = ' + date + \
             ' AND segmentid IN ({})'.format(str(segList)[1:-1])
-
     cursor.execute(sql)
 
 
@@ -118,8 +148,8 @@ def temper(conn):
     try:
         cursor = conn.cursor()
         cursor.execute("select exists(select relname from pg_class where relname='" + auth_class.login.tempDb + "')")
+        # turns exists to True if a temp table already exists in the database
         exists = cursor.fetchone()[0]
-        cursor.close()
     finally:
         pass
 
@@ -131,7 +161,8 @@ def temper(conn):
     else:
         pass
 
-    # create temp table
+    # create temp table in database
+    # -- note that this create table statement is slightly different from the main databases create table statement as the geom/geometry column is in crs 4326 instead of 3005. Alter this to 3005 for input table create statement.
     cursor = conn.cursor()
     sql =   ('CREATE TABLE ' + auth_class.login.tempDb + ' ' +
             '(segmentId BIGINT PRIMARY KEY,' +
@@ -152,11 +183,12 @@ def temper(conn):
             'geom GEOMETRY (LineString, 4326),' +
             'lenM FLOAT,' +
             'sogKt FLOAT)')
-
     cursor.execute(sql)
 
 
 def geoger(conn):
+    # creates geometry from start/end lat/long and converts into 3005, then determines length and speed over ground.
+
     cursor = conn.cursor()
 
     # creates geometry in the temporary database
@@ -177,45 +209,13 @@ def geoger(conn):
 
 
 def sql_tabler(conn):
+    # updates the main database with the data from the temp database on segmentid
     cursor = conn.cursor()
-
     cursor.execute('UPDATE ' + auth_class.login.inputDb + ' AS a SET ' +
                 'geom = b.geom, ' +
                 'lenm = b.lenm, ' +
                 'sogkt = b.sogkt ' +
                 'FROM ' + auth_class.login.tempDb + ' AS b WHERE a.segmentid = b.segmentid')
-
-
-def logger(happenings, resultsList): # this still needs lot of work.......
-    global start_time
-    global conn
-
-    # configure logger --> this configures for the log file but the console output is handled separately
-    logger = logging.getLogger('log')
-    logging.root.setLevel(logging.NOTSET)
-    # logging.basicConfig(filename='seg_to_line_LOG.log', format="%(asctime)s;%(levelname)s;%(message)s",datefmt='%Y-%m-%d %H:%M:%S')
-    logging.basicConfig(filename='seg_to_line_LOG.log')
-
-    now = datetime.now()
-    duration = (now - start_time)
-
-    if happenings == False:
-        logger.info("Nothing to update.. \nCompleted: " + now.strftime("%d/%m/%Y %H:%M:%S") + "\nRuntime = " + str(duration))
-
-        print('\n--------------------------------------------------------------------------------\n\nNothing to update..',
-              "\nCompleted: ", now.strftime("%d/%m/%Y %H:%M:%S"), "\nRuntime = ", duration,"\n\n--------------------------------------------------------------------------------\n")
-
-    else:
-        logger.info("--------------------------------------------------------------------------------")
-        logger.info('%s', resultsList)
-        logger.info("   Completed: "+ now.strftime("%d/%m/%Y %H:%M:%S")+ "  Runtime = "+ str(duration))
-
-        print('\n--------------------------------------------------------------------------------\n')
-        for key, value in resultsList.items():
-            print(key, ' : ', value)
-        print("\n* listed line segments have been added or updated\nCompleted: ", now.strftime("%d/%m/%Y %H:%M:%S"),
-              "\nRuntime = ", duration,
-              "\n\n--------------------------------------------------------------------------------\n")
 
 
 if __name__ == "__main__":
