@@ -217,6 +217,9 @@ def sql_tabler(conn):
                 'sogkt = b.sogkt ' +
                 'FROM ' + auth_class.login.tempDb + ' AS b WHERE a.segmentid = b.segmentid')
 
+    sql = "CREATE INDEX idx ON "+auth_class.login.inputDb+" USING gist (geom);"
+    cursor.execute(sql)
+
 
 if __name__ == "__main__":
     main()
