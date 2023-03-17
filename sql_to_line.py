@@ -37,6 +37,7 @@ def main():
 
     # this is an assumption that all new or needing updating segments will not have any geom at this point --> must be careful here because this won't realize if segments need to be deleted
     cursor = conn.cursor()
+
     sql = "SELECT segmentid FROM " + auth_class.login.inputDb + " WHERE geom IS NULL"
     cursor.execute(sql)
     # Maybe alter the above query to also check for lenm and sogkt being 'null' as the assumption those would have to be updated as well?
@@ -67,9 +68,12 @@ def main():
         duration = (now - start_time)
         print('\n--------------------------------------------------------------------------------\n')
 
+        filter_data(conn)
+
         # select dates that occur within the segments being updated
         cursor = conn.cursor()
         sql = "SELECT starttime FROM " + auth_class.login.inputDb + " WHERE segmentid IN ({})".format(str(segList)[1:-1])
+
         cursor.execute(sql)
         result = cursor.fetchall()
 
@@ -83,21 +87,26 @@ def main():
         # only keeps unique dates to prevent unnecessary loops
         dateList = set(dateList)
 
+
         for dates in dateList:
             # creates dictionary that stores pairings of dates and their associated segmentid's
             # -- note that this has been moved into this loop as the dictionary would be completely gone otherwise in the event of a premature program exit. This way we can see progress in the log.
             resultsDict = {}
 
             # deletes previous temp database if exists and creates new one
+            print("temper")
             temper(conn)
 
             # inserts the queried data into the temp table
+            print("inserter")
             temp_inserter(conn, dates, segList)
 
             # where the geographic magic happens -- change this to sql
+            print("geoger")
             geoger(conn)
 
             # inserts data back into sql and then cleans temp
+            print("tabler")
             sql_tabler(conn)
 
             # adds the days that have been processed to a list to be logged
@@ -131,6 +140,13 @@ def main():
     # closes connection to database which also saves changes
     conn.close()
 
+
+def filter_data(conn):
+    # method to filter out any unwanted data moving forward that is missed earlier. In this case there is some zero duration ais lines which messes with SOG and is clearly an error.
+    cursor=conn.cursor()
+    sql = "DELETE FROM " + auth_class.login.inputDb + " WHERE duration = 0"
+    cursor.execute(sql)
+    conn.commit()
 
 def temp_inserter(conn, date, segList):
     # moves the selected data from the main database into the temp database
@@ -217,7 +233,9 @@ def sql_tabler(conn):
                 'sogkt = b.sogkt ' +
                 'FROM ' + auth_class.login.tempDb + ' AS b WHERE a.segmentid = b.segmentid')
 
-    sql = "CREATE INDEX idx ON "+auth_class.login.inputDb+" USING gist (geom);"
+    sql = ('DROP INDEX IF EXISTS idx')
+    cursor.execute(sql)
+    sql = ('CREATE INDEX idx ON temp USING gist (geom)')
     cursor.execute(sql)
 
 
