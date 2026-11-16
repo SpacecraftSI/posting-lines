@@ -3,16 +3,15 @@
 
 class login:
     # Postgresql/Postgis database login details
-    db = 'db'
+    db = 'eccc-data'
     host = 'localhost'
-    port = '0000'
+    port = '5432'
     schem = 'public'
 
-    user = 'username'
-    pw = 'password'
+    user = 'postgres'
+    pw = 'postgres'
 
-    inputDb = 'inputDb'
-    outputDb = 'outputDb' #currently redundant as script uses inputDb for output
+    inputDb = ['segments_2023_07','segments_2023_08','segments_2023_09','segments_2023_10','segments_2023_11','segments_2023_12']
 
     tempDb = 'temp'
 

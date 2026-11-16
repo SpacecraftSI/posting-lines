@@ -6,6 +6,10 @@ __pycache__/
 # log file
 seg_to_line_LOG.log
 
+# Greg's decoder
+decoder_v3_to_segments.py
+decoder_v3_helpers.py
+
 # C extensions
 *.so
 
